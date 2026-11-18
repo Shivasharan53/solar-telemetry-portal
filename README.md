@@ -1,66 +1,82 @@
 # SOLARA | Smart Solar Farm Telemetry Portal
 
-A MongoDB-based solar inverter monitoring project built around the NoSQL assignment brief.
+**SOLARA** is an original CleanTech prototype for monitoring a multi-vendor solar farm. It brings inverter status, power output, temperatures, firmware metadata, site weather, telemetry trends and equipment events into one operations view.
 
-## Assignment alignment
-- Python, PyMongo Async, FastAPI, Streamlit and MongoDB.
-- Nested inverter status, firmware, weather and vendor error-log documents.
-- MongoDB aggregation pipeline calculates uptime percentages by manufacturer.
-- Render can be used for deployment; local development does not require Render.
+> **Data integrity note:** The built-in data is simulated for demonstration. It is not connected to physical inverters and must not be used for operational or safety decisions. The dashboard's *snapshot availability* is the share of currently online inverters, not a historical uptime SLA.
 
-## Project structure
-```text
+## Product capabilities
+- Fleet overview with current output, snapshot availability and attention-needed counts.
+- Inverter filtering by solar site and operational state.
+- 24-hour simulated telemetry profile and manufacturer comparison.
+- Nested vendor-specific metadata and error-event arrays.
+- MongoDB document storage and manufacturer-level aggregation.
+- FastAPI endpoints with a usable demo fallback when MongoDB is not configured.
+
+## Technology
+Python 3.11+, Streamlit, FastAPI, PyMongo, MongoDB Atlas, Pandas and Plotly.
+
+## Project layout
+\`\`\`text
 solar-telemetry-portal/
 ├── app/
-│   └── main.py          # FastAPI backend
-├── app.py               # Streamlit frontend
+│   ├── __init__.py
+│   ├── database.py
+│   ├── demo_data.py
+│   └── main.py
+├── app.py
 ├── requirements.txt
-├── README.md
+├── Dockerfile
 ├── .env.example
 └── .gitignore
-```
+\`\`\`
 
-## 1. Setup
-Python 3.11 or newer is recommended.
-
-```bash
-python -m venv venv
-```
-Windows:
-```bash
-venv\Scripts\activate
-```
-Install:
-```bash
+## Run locally (Windows PowerShell)
+\`\`\`powershell
+py -3.11 -m venv .venv
+.venv\\Scripts\\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-## 2. Configure MongoDB
-Copy `.env.example` to `.env`, then add your MongoDB Atlas connection string.
-Never upload `.env` to GitHub.
-
-## 3. Run the backend
-```bash
-uvicorn app.main:app --reload
-```
-Open http://127.0.0.1:8000/docs
-
-Use `POST /api/telemetry/seed` once to insert sample documents.
-Then check `GET /api/telemetry` and `GET /api/analytics/uptime-by-manufacturer`.
-
-## 4. Run the dashboard
-Open a second terminal, activate the same virtual environment, then run:
-```bash
 streamlit run app.py
-```
-The dashboard can show a demo preview without a database URI. To connect to MongoDB, set `MONGODB_URI` in `.env`.
+\`\`\`
+The Streamlit dashboard runs in demo mode without MongoDB.
 
-## 5. Deployment
-Deploy the FastAPI backend and Streamlit frontend as separate services on a hosting platform that supports Python. Configure `MONGODB_URI` and `DATABASE_NAME` as environment variables for both services. Render is optional for local development and may have plan limits.
+## Run the API
+In another terminal, activate the same environment:
+\`\`\`powershell
+uvicorn app.main:app --reload
+\`\`\`
+- API home: http://127.0.0.1:8000/
+- Interactive API docs: http://127.0.0.1:8000/docs
+- Health check: http://127.0.0.1:8000/health
 
-## Main API routes
-- `GET /` API welcome
-- `GET /health` MongoDB connection check
-- `POST /api/telemetry/seed` insert sample inverter documents
-- `GET /api/telemetry` read inverter documents
-- `GET /api/analytics/uptime-by-manufacturer` aggregation result
+## Connect MongoDB Atlas
+1. Create a MongoDB Atlas cluster and database user.
+2. Add your current IP address to Network Access.
+3. Copy the Python connection string.
+4. Copy \`.env.example\` to \`.env\` and set \`MONGODB_URI\` and \`DATABASE_NAME\`.
+5. Keep \`USE_MONGODB=true\`.
+6. Start the API and call \`POST /api/telemetry/seed\` once to insert the sample inverter documents.
+7. Restart the dashboard. It will read the MongoDB \`inverters\` collection when records are present.
+
+Never commit \`.env\` or expose your database password.
+
+## API endpoints
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | \`/\` | API welcome |
+| GET | \`/health\` | Service and MongoDB status |
+| GET | \`/api/inverters\` | List and filter inverters |
+| GET | \`/api/inverters/{inverter_id}\` | Read one inverter |
+| GET | \`/api/fleet/summary\` | Fleet KPI summary |
+| GET | \`/api/analytics/availability-by-manufacturer\` | MongoDB aggregation by manufacturer |
+| GET | \`/api/telemetry/{inverter_id}\` | Inverter telemetry |
+| POST | \`/api/telemetry/seed\` | Safely upsert sample inverter documents |
+
+## MongoDB document design
+Common fields are nested under \`status\`, \`firmware\` and \`weather\`. Vendor-specific fields stay under \`vendor_metadata\`; error events are stored as an array. This document approach accommodates different manufacturer payloads without forcing every vendor into identical columns.
+
+## Deployment notes
+Deploy the FastAPI API and Streamlit dashboard as separate services for a simple production topology. Set \`MONGODB_URI\`, \`DATABASE_NAME\` and \`USE_MONGODB\` in each service's environment. Do not deploy with demo credentials. Add authentication, input validation, role-based access, real telemetry ingestion and alert acknowledgement before using with a real solar plant.
+
+## Assignment mapping
+Pragyan AI Super 30, Phase 1, Project 5: Renewable Energy — Smart Solar Farm Multi-Inverter Telemetry Portal. The prototype demonstrates nested MongoDB documents and an aggregation pipeline that calculates **snapshot availability** by manufacturer.
