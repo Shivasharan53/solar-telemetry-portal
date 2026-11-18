@@ -16,6 +16,19 @@ if "MONGODB_URI" in st.secrets:
 if "DB_NAME" in st.secrets:
     os.environ["DB_NAME"] = st.secrets["DB_NAME"]
 
+
+@st.cache_resource
+def get_persistent_loop():
+    """Creates one single event loop for the entire Streamlit session/app lifetime."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop
+
+
+# Set the persistent loop BEFORE importing backend so Motor binds to this exact loop
+APP_LOOP = get_persistent_loop()
+asyncio.set_event_loop(APP_LOOP)
+
 from backend import (
     TelemetryPayload,
     ingest_telemetry,
@@ -26,21 +39,9 @@ from backend import (
 
 
 def run_async(coro):
-    """Safely executes Motor async coroutines inside Streamlit."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    if loop.is_running():
-        new_loop = asyncio.new_event_loop()
-        try:
-            return new_loop.run_until_complete(coro)
-        finally:
-            new_loop.close()
-    return loop.run_until_complete(coro)
-
-
+    """Executes Motor async coroutines on the same persistent loop Motor is bound to."""
+    asyncio.set_event_loop(APP_LOOP)
+    return APP_LOOP.run_until_complete(coro)
 st.set_page_config(
     page_title="Smart Solar Farm 3D Telemetry Portal",
     page_icon="☀️",
