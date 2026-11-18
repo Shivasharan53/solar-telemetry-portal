@@ -1,6 +1,7 @@
 import os
 import json
-import requests
+import asyncio
+from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -9,10 +10,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-raw_api_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").strip().rstrip("/")
-if raw_api_url and not raw_api_url.startswith("http"):
-    raw_api_url = f"https://{raw_api_url}"
-API_BASE_URL = raw_api_url
+# Load MONGODB_URI from Streamlit Secrets BEFORE importing backend
+if "MONGODB_URI" in st.secrets:
+    os.environ["MONGODB_URI"] = st.secrets["MONGODB_URI"]
+if "DB_NAME" in st.secrets:
+    os.environ["DB_NAME"] = st.secrets["DB_NAME"]
+
+from backend import (
+    TelemetryPayload,
+    ingest_telemetry,
+    seed_sample_data,
+    get_uptime_by_manufacturer,
+    get_recent_telemetry,
+)
+
+
+def run_async(coro):
+    """Safely executes Motor async coroutines inside Streamlit."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    if loop.is_running():
+        new_loop = asyncio.new_event_loop()
+        try:
+            return new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+    return loop.run_until_complete(coro)
+
 
 st.set_page_config(
     page_title="Smart Solar Farm 3D Telemetry Portal",
@@ -144,12 +171,11 @@ with st.sidebar:
     st.markdown("### ⚡ GRID OPERATIONS")
     if st.button("🌱 Seed 60 Multi-Vendor BSON Logs", use_container_width=True):
         try:
-            res = requests.post(f"{API_BASE_URL}/api/v1/seed?count=60", timeout=25)
-            res.raise_for_status()
-            st.success(f"Injected {res.json()['seeded_records']} BSON documents!")
+            res = run_async(seed_sample_data(count=60))
+            st.success(f"Injected {res['seeded_records']} BSON documents!")
             st.rerun()
         except Exception as e:
-            st.error(f"Backend error: {e}")
+            st.error(f"MongoDB Seed Error: {e}")
 
     st.divider()
     st.markdown("### 📡 PUSH LIVE INVERTER PAYLOAD")
@@ -167,30 +193,29 @@ with st.sidebar:
         if submitted:
             try:
                 diag_dict = json.loads(custom_json)
-                payload = {
-                    "inverter_id": inv_id,
-                    "manufacturer": vendor,
-                    "plant_zone": zone,
-                    "status": status,
-                    "power_output_kw": kw,
-                    "firmware_meta": {"fw_version": "v4.5-3D", "protocol": "Modbus-TCP"},
-                    "vendor_diagnostics": diag_dict,
-                    "weather_context": {"irradiance_wm2": 920, "ambient_temp_c": 31.4},
-                }
-                r = requests.post(f"{API_BASE_URL}/api/v1/telemetry", json=payload, timeout=15)
-                r.raise_for_status()
-                st.success("BSON Telemetry Stored!")
+                payload = TelemetryPayload(
+                    inverter_id=inv_id,
+                    manufacturer=vendor,
+                    plant_zone=zone,
+                    status=status,
+                    power_output_kw=kw,
+                    timestamp=datetime.now(timezone.utc),
+                    firmware_meta={"fw_version": "v4.5-3D", "protocol": "Modbus-TCP"},
+                    vendor_diagnostics=diag_dict,
+                    weather_context={"irradiance_wm2": 920, "ambient_temp_c": 31.4},
+                )
+                run_async(ingest_telemetry(payload))
+                st.success("BSON Telemetry Stored in MongoDB!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Ingestion failed: {e}")
 
-# --- FETCH AGGREGATED DATA ---
+# --- FETCH AGGREGATED DATA DIRECTLY VIA MOTOR ---
 try:
-    agg_res = requests.get(f"{API_BASE_URL}/api/v1/analytics/uptime-by-manufacturer", timeout=20)
-    agg_res.raise_for_status()
-    uptime_data = agg_res.json()
+    uptime_data = run_async(get_uptime_by_manufacturer())
 except Exception as e:
-    st.warning(f"Connecting to FastAPI Backend (`{API_BASE_URL}`). Refresh in a few seconds if starting up. Error: {e}")
+    st.error(f"MongoDB Atlas Connection Error: {e}")
+    st.info("Verify `MONGODB_URI` in Streamlit Settings → Secrets and ensure `0.0.0.0/0` is allowed in MongoDB Atlas Network Access.")
     st.stop()
 
 if not uptime_data:
@@ -312,16 +337,11 @@ with b2:
         ["All"] + df_uptime["manufacturer"].tolist(),
         label_visibility="collapsed",
     )
-    recent_res = requests.get(
-        f"{API_BASE_URL}/api/v1/telemetry/recent",
-        params={"manufacturer": selected_vendor, "limit": 10},
-        timeout=15,
-    )
-    recent_logs = recent_res.json()
+    recent_logs = run_async(get_recent_telemetry(manufacturer=selected_vendor, limit=10))
     for log in recent_logs[:3]:
         badge = "🟢" if log["status"] == "ONLINE" else ("🟡" if log["status"] == "DEGRADED" else "🔴")
         with st.expander(f"{badge} {log['inverter_id']} | {log['manufacturer']} | {log['power_output_kw']} kW"):
-            st.json(log)
+            st.json(log, default=str)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- 3D INTERACTIVE SOLAR FARM ARRAY DIGITAL TWIN ---
