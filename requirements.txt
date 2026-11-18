@@ -1,8 +1,7 @@
-fastapi
-uvicorn[standard]
-pymongo
-streamlit
-pandas
-plotly
-python-dotenv
-gunicorn
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pymongo>=4.10,<5.0
+streamlit>=1.39,<2.0
+pandas>=2.2,<4.0
+plotly>=5.24,<7.0
+python-dotenv>=1.0,<2.0
