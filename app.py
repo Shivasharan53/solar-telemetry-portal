@@ -1,250 +1,169 @@
 import os
+from datetime import datetime, timezone
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-load_dotenv()
+from app.demo_data import SAMPLE_INVERTERS, demo_telemetry
 
-st.set_page_config(
-    page_title="SOLARA | Solar Intelligence",
-    page_icon="☀️",
-    layout="wide"
-)
+load_dotenv()
+st.set_page_config(page_title="SOLARA | Solar Intelligence", page_icon="☀️", layout="wide")
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
-
-html, body, [class*="css"] {
-    font-family: Manrope, sans-serif;
-}
-.stApp {
-    background: #071511;
-    color: #e9f4ee;
-}
-section[data-testid="stSidebar"] {
-    background: #0d211a;
-}
-div[data-testid="stMetric"] {
-    background: #10271e;
-    border: 1px solid #244637;
-    padding: 18px;
-    border-radius: 14px;
-}
-h1, h2, h3 {
-    color: #e9f4ee;
-}
+html, body, [class*="css"] { font-family: Manrope, sans-serif; }
+.stApp { background: radial-gradient(circle at 88% 0%, #183b32 0, #091711 36%, #07110e 78%); color: #e9f4ee; }
+section[data-testid="stSidebar"] { background: #0c1d17; border-right: 1px solid #244436; }
+div[data-testid="stMetric"] { background: linear-gradient(135deg,#142b21,#102119); border: 1px solid #2b4a3a; padding: 17px; border-radius: 15px; }
+h1,h2,h3 { color: #edf7f0; letter-spacing: -0.035em; }
+.brand { color:#b9f36b; font-size:.76rem; font-weight:800; letter-spacing:.2em; }
+.hero { padding:22px 25px; border:1px solid #315441; border-radius:18px; background:linear-gradient(110deg,rgba(34,76,55,.72),rgba(12,31,24,.72)); margin:12px 0 20px; }
+.muted {color:#a8beb0;font-size:.9rem}
+div[data-testid="stDataFrame"] {border:1px solid #294738;border-radius:12px;overflow:hidden}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("☀️ SOLARA")
-st.caption("FIELD INTELLIGENCE / MULTI-INVERTER TELEMETRY")
+DB_NAME = os.getenv("DATABASE_NAME", "solar_farm_db")
+MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
+USE_MONGODB = os.getenv("USE_MONGODB", "true").lower() == "true"
 
-# Read credentials from environment variables
-uri = os.getenv("MONGODB_URI", "").strip()
-db_name = os.getenv("DATABASE_NAME", "solar_farm_db")
+@st.cache_data(ttl=30)
+def load_inverters():
+    if MONGODB_URI and USE_MONGODB:
+        try:
+            with MongoClient(MONGODB_URI, serverSelectionTimeoutMS=4000) as client:
+                client.admin.command("ping")
+                records = list(client[DB_NAME].inverters.find({}, {"_id": 0}))
+                if records:
+                    return records, "MongoDB Atlas", True
+        except Exception as exc:
+            return SAMPLE_INVERTERS, f"Demo mode (MongoDB unavailable: {type(exc).__name__})", False
+    return SAMPLE_INVERTERS, "Demo telemetry", False
 
-st.sidebar.markdown("### CONTROL ROOM")
-st.sidebar.caption("Solar generation monitoring")
+@st.cache_data(ttl=30)
+def load_telemetry():
+    if MONGODB_URI and USE_MONGODB:
+        try:
+            with MongoClient(MONGODB_URI, serverSelectionTimeoutMS=4000) as client:
+                records = list(client[DB_NAME].telemetry.find({}, {"_id": 0}).sort("timestamp", 1).limit(5000))
+                if records:
+                    return records
+        except Exception:
+            pass
+    return demo_telemetry(hours=24)
 
-demo = st.sidebar.toggle(
-    "Demo preview",
-    value=not bool(uri)
-)
+docs, data_source, mongo_connected = load_inverters()
+telemetry = load_telemetry()
+rows = []
+for item in docs:
+    status, weather, firmware = item.get("status", {}), item.get("weather", {}), item.get("firmware", {})
+    rows.append({
+        "Inverter": item.get("inverter_id", "Unknown"),
+        "Manufacturer": item.get("manufacturer", "Unknown"),
+        "Site": item.get("site", "Unassigned"),
+        "State": status.get("state", "unknown"),
+        "Power (kW)": float(status.get("power_kw", 0) or 0),
+        "Temperature (°C)": float(status.get("temperature_c", 0) or 0),
+        "Firmware": firmware.get("version", "—"),
+        "Weather": weather.get("condition", "—"),
+        "Irradiance (W/m²)": weather.get("irradiance_w_m2", 0),
+        "Errors": len(item.get("error_logs", [])),
+    })
+df = pd.DataFrame(rows)
 
-sample = [
-    {
-        "inverter_id": "INV-001",
-        "manufacturer": "SolarEdge",
-        "site": "Farm North",
-        "status": {
-            "state": "online",
-            "power_kw": 82.5,
-            "temperature_c": 41.2
-        },
-        "firmware": {"version": "v2.4.1"},
-        "weather": {
-            "condition": "sunny",
-            "irradiance_w_m2": 820
-        },
-        "error_logs": []
-    },
-    {
-        "inverter_id": "INV-002",
-        "manufacturer": "SMA",
-        "site": "Farm South",
-        "status": {
-            "state": "online",
-            "power_kw": 74.2,
-            "temperature_c": 39.8
-        },
-        "firmware": {"version": "v3.1.0"},
-        "weather": {
-            "condition": "cloudy",
-            "irradiance_w_m2": 610
-        },
-        "error_logs": []
-    },
-    {
-        "inverter_id": "INV-003",
-        "manufacturer": "Growatt",
-        "site": "Farm East",
-        "status": {
-            "state": "warning",
-            "power_kw": 28.4,
-            "temperature_c": 56.1
-        },
-        "firmware": {"version": "v1.8.2"},
-        "weather": {
-            "condition": "partly cloudy",
-            "irradiance_w_m2": 690
-        },
-        "error_logs": [
-            {
-                "code": "TEMP-02",
-                "message": "High inverter temperature"
-            }
-        ]
-    }
-]
+with st.sidebar:
+    st.markdown('<div class="brand">☀ SOLARA / CONTROL ROOM</div>', unsafe_allow_html=True)
+    st.markdown("### Fleet controls")
+    st.caption(f"Source: {data_source}")
+    site_options = ["All sites"] + sorted(df["Site"].dropna().unique().tolist())
+    selected_site = st.selectbox("Solar site", site_options)
+    state_options = ["All states", "online", "warning", "offline"]
+    selected_state = st.selectbox("Inverter state", state_options)
+    st.divider()
+    st.caption("Demonstration values are simulated, not live plant readings.")
+    if st.button("↻ Refresh telemetry", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-docs = sample
+view = df.copy()
+if selected_site != "All sites":
+    view = view[view["Site"] == selected_site]
+if selected_state != "All states":
+    view = view[view["State"] == selected_state]
 
-if uri and not demo:
-    try:
-        client = MongoClient(
-            uri,
-            serverSelectionTimeoutMS=5000
-        )
-        client.admin.command("ping")
-        docs = list(
-            client[db_name]["inverters"].find(
-                {},
-                {"_id": 0}
-            )
-        )
-        client.close()
+st.markdown('<div class="brand">RENEWABLE ENERGY / FLEET INTELLIGENCE</div>', unsafe_allow_html=True)
+st.title("Solar operations overview")
+st.markdown('<div class="hero"><h3 style="margin:0">See the whole farm. Understand every inverter.</h3><p class="muted">Unified operational visibility across multi-vendor solar assets, firmware and site conditions.</p></div>', unsafe_allow_html=True)
 
-    except Exception as e:
-        st.error(f"MongoDB connection failed: {e}")
-        st.stop()
+count = len(view)
+online = int((view["State"] == "online").sum()) if count else 0
+availability = online / count * 100 if count else 0
+power = view["Power (kW)"].sum() if count else 0
+attention = int(view["State"].isin(["warning", "offline"]).sum()) if count else 0
+average_temp = view["Temperature (°C)"].mean() if count else 0
 
-elif not demo:
-    st.warning("Add MONGODB_URI to Render environment variables.")
-    st.stop()
+m1,m2,m3,m4,m5 = st.columns(5)
+m1.metric("CURRENT OUTPUT", f"{power:,.1f} kW")
+m2.metric("SNAPSHOT AVAILABILITY", f"{availability:.1f}%")
+m3.metric("ONLINE UNITS", f"{online}/{count}")
+m4.metric("AVG. TEMPERATURE", f"{average_temp:.1f} °C")
+m5.metric("NEEDS ATTENTION", attention)
 
-if not docs:
-    st.warning("No inverter records found.")
-    st.stop()
-
-df = pd.DataFrame([
-    {
-        "Inverter": d.get("inverter_id", "-"),
-        "Manufacturer": d.get("manufacturer", "-"),
-        "Site": d.get("site", "-"),
-        "State": d.get("status", {}).get("state", "unknown"),
-        "Power (kW)": d.get("status", {}).get("power_kw", 0),
-        "Temperature (°C)": d.get("status", {}).get("temperature_c", 0),
-        "Firmware": d.get("firmware", {}).get("version", "-"),
-        "Weather": d.get("weather", {}).get("condition", "-"),
-        "Irradiance": d.get("weather", {}).get("irradiance_w_m2", 0),
-        "Errors": len(d.get("error_logs", []))
-    }
-    for d in docs
-])
-
-total_power = df["Power (kW)"].sum()
-online = int((df["State"] == "online").sum())
-uptime = online / len(df) * 100
-alerts = int((df["State"] != "online").sum())
-
-c1, c2, c3, c4 = st.columns(4)
-
-c1.metric("LIVE GENERATION", f"{total_power:,.1f} kW")
-c2.metric("FLEET UPTIME", f"{uptime:.1f}%")
-c3.metric("ACTIVE INVERTERS", f"{online}/{len(df)}")
-c4.metric("ATTENTION NEEDED", alerts)
-
-left, right = st.columns([1.2, 1])
-
+left, right = st.columns([1.35, 1])
 with left:
-    st.subheader("Generation by manufacturer")
-
-    chart = px.bar(
-        df,
-        x="Manufacturer",
-        y="Power (kW)",
-        color="Manufacturer",
-        text_auto=".1f",
-        template="plotly_dark"
-    )
-
-    chart.update_layout(
-        showlegend=False,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)"
-    )
-
-    st.plotly_chart(chart, use_container_width=True)
-
+    st.subheader("24-hour generation profile")
+    telemetry_df = pd.DataFrame(telemetry)
+    if not telemetry_df.empty:
+        telemetry_df["timestamp"] = pd.to_datetime(telemetry_df["timestamp"], utc=True, errors="coerce")
+        selected_inverter = st.selectbox("Telemetry series", ["Whole fleet"] + view["Inverter"].tolist())
+        if selected_inverter != "Whole fleet":
+            telemetry_df = telemetry_df[telemetry_df["inverter_id"] == selected_inverter]
+        profile = telemetry_df.groupby("timestamp", as_index=False)["power_kw"].sum()
+        fig = px.area(profile, x="timestamp", y="power_kw", color_discrete_sequence=["#b9f36b"])
+        fig.update_traces(line_width=2, fillcolor="rgba(185,243,107,.15)")
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          font_color="#e1eee6", margin=dict(l=5,r=5,t=15,b=5),
+                          xaxis_title="", yaxis_title="Power (kW)")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No telemetry history found yet. Seed sample telemetry or connect an IoT source.")
 with right:
-    st.subheader("Fleet condition")
+    st.subheader("Manufacturer comparison")
+    maker = view.groupby("Manufacturer", as_index=False).agg(
+        units=("Inverter","count"),
+        online=("State",lambda x:(x=="online").sum()),
+        power=("Power (kW)","sum"))
+    if not maker.empty:
+        maker["Snapshot availability (%)"] = (maker["online"] / maker["units"] * 100).round(1)
+        fig = px.bar(maker, x="Manufacturer", y="power", color="Manufacturer",
+                     color_discrete_sequence=["#b9f36b","#61c8a4","#7e9ee8"],
+                     hover_data=["units","Snapshot availability (%)"])
+        fig.update_layout(showlegend=False,paper_bgcolor="rgba(0,0,0,0)",
+                          plot_bgcolor="rgba(0,0,0,0)",font_color="#e1eee6",
+                          margin=dict(l=5,r=5,t=15,b=5),xaxis_title="",yaxis_title="Power (kW)")
+        st.plotly_chart(fig,use_container_width=True)
 
-    states = (
-        df["State"]
-        .value_counts()
-        .rename_axis("State")
-        .reset_index(name="Units")
-    )
+st.subheader("Inverter fleet")
+st.dataframe(view, use_container_width=True, hide_index=True)
 
-    chart2 = px.pie(
-        states,
-        names="State",
-        values="Units",
-        hole=0.62,
-        template="plotly_dark"
-    )
-
-    chart2.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)"
-    )
-
-    st.plotly_chart(chart2, use_container_width=True)
-
-st.subheader("Inverter telemetry")
-
-st.dataframe(
-    df,
-    use_container_width=True,
-    hide_index=True
-)
-
-st.subheader("Fault watch")
-
-faults = [
-    (
-        d.get("inverter_id"),
-        err.get("code"),
-        err.get("message")
-    )
-    for d in docs
-    for err in d.get("error_logs", [])
-]
-
-if faults:
-    st.dataframe(
-        pd.DataFrame(
-            faults,
-            columns=["Inverter", "Fault code", "Description"]
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
+st.subheader("Operational event watch")
+event_rows = []
+for item in docs:
+    for event in item.get("error_logs", []):
+        event_rows.append({
+            "Inverter": item.get("inverter_id"),
+            "Manufacturer": item.get("manufacturer"),
+            "Site": item.get("site"),
+            "Severity": event.get("severity", "warning"),
+            "Code": event.get("code", "UNSPECIFIED"),
+            "Event": event.get("message", "No description"),
+        })
+if event_rows:
+    st.dataframe(pd.DataFrame(event_rows), use_container_width=True, hide_index=True)
 else:
-    st.success("No inverter faults reported.")
+    st.success("No active events reported by the selected dataset.")
 
-st.caption(
-    "SOLARA FIELD INTELLIGENCE • Demonstration telemetry unless MongoDB is connected"
-)
+st.caption("SOLARA FIELD INTELLIGENCE  •  Prototype environment  •  Snapshot availability is not historical uptime.")
