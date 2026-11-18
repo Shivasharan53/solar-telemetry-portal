@@ -1,3 +1,4 @@
+
 import os
 import json
 import asyncio
@@ -11,11 +12,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Load MONGODB_URI from Streamlit Secrets BEFORE importing backend
-if "MONGODB_URI" in st.secrets:
-    os.environ["MONGODB_URI"] = st.secrets["MONGODB_URI"]
-if "DB_NAME" in st.secrets:
-    os.environ["DB_NAME"] = st.secrets["DB_NAME"]
-
+try:
+    if "MONGODB_URI" in st.secrets:
+        os.environ["MONGODB_URI"] = st.secrets["MONGODB_URI"]
+    if "DB_NAME" in st.secrets:
+        os.environ["DB_NAME"] = st.secrets["DB_NAME"]
+except Exception as e:
+    st.error(f"Streamlit Secrets Error: {e}")
 
 @st.cache_resource
 def get_persistent_loop():
@@ -23,7 +26,6 @@ def get_persistent_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop
-
 
 # Set the persistent loop BEFORE importing backend so Motor binds to this exact loop
 APP_LOOP = get_persistent_loop()
@@ -37,11 +39,11 @@ from backend import (
     get_recent_telemetry,
 )
 
-
 def run_async(coro):
     """Executes Motor async coroutines on the same persistent loop Motor is bound to."""
     asyncio.set_event_loop(APP_LOOP)
     return APP_LOOP.run_until_complete(coro)
+
 st.set_page_config(
     page_title="Smart Solar Farm 3D Telemetry Portal",
     page_icon="☀️",
