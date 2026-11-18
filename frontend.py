@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-raw_api_url = os.getenv("API_BASE_URL", "http://localhost:8000").strip().rstrip("/")
+raw_api_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").strip().rstrip("/")
 if raw_api_url and not raw_api_url.startswith("http"):
     raw_api_url = f"https://{raw_api_url}"
 API_BASE_URL = raw_api_url
@@ -190,7 +190,7 @@ try:
     agg_res.raise_for_status()
     uptime_data = agg_res.json()
 except Exception as e:
-    st.warning(f"Connecting to FastAPI Backend (`{API_BASE_URL}`). If on Render free tier, wait ~30s for wake-up and refresh. Error: {e}")
+    st.warning(f"Connecting to FastAPI Backend (`{API_BASE_URL}`). Refresh in a few seconds if starting up. Error: {e}")
     st.stop()
 
 if not uptime_data:
