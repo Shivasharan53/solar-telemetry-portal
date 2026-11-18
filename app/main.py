@@ -88,4 +88,5 @@ async def uptime_by_manufacturer():
         }},
         {"$sort": {"manufacturer": 1}},
     ]
-    return await db["inverters"].aggregate(pipeline).to_list(length=100)
+   cursor = await db["inverters"].aggregate(pipeline)
+return await cursor.to_list(length=100)
