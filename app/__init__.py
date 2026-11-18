@@ -1,1 +1,0 @@
-"""Solar Telemetry backend package."""
